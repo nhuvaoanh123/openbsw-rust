@@ -97,6 +97,9 @@ def run_tests(bus, categories=None):
 
     results = []
     for category, test_fn in tests:
+        # Flush any stale frames before each test
+        while bus.recv(timeout=0.05):
+            pass
         try:
             result = test_fn(bus)
             results.append((category, result))
@@ -105,7 +108,7 @@ def run_tests(bus, categories=None):
         except Exception as e:
             results.append((category, TestResult(test_fn.__name__, False, str(e))))
             print(f"  [FAIL] {test_fn.__name__}: {e}")
-        time.sleep(0.1)  # brief pause between tests
+        time.sleep(0.3)  # longer pause — server needs time to process + avoid bus-off
 
     return results
 
@@ -123,9 +126,18 @@ def main():
 
     bus = create_bus(channel=args.bus)
 
-    # Brief flush -- discard any pending frames
-    while bus.recv(timeout=0.1):
+    # Flush stale frames (wait longer for bus to settle)
+    while bus.recv(timeout=0.3):
         pass
+
+    # Warm-up: send a TesterPresent and discard the response.
+    # This ensures the server's CAN controller is synchronized to the bus.
+    print("Warm-up: sending TesterPresent...")
+    send_recv_uds(bus, bytes([0x3E, 0x00]), timeout=1.0)
+    while bus.recv(timeout=0.2):
+        pass
+    time.sleep(0.3)
+    print()
 
     results = run_tests(bus, categories)
     bus.shutdown()

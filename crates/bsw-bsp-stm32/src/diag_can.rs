@@ -81,7 +81,7 @@
 
 use bsw_can::frame::CanFrame;
 use bsw_can::can_id::CanId;
-use bsw_can::transceiver::CanTransceiver;
+use bsw_can::transceiver::{CanTransceiver, TransceiverState};
 use bsw_docan::codec::{
     self, CodecConfig, DecodedFrame, FirstFrame, SingleFrame, ConsecutiveFrame,
 };
@@ -326,6 +326,22 @@ impl<'a, T: CanTransceiver + CanReceiver> DiagCanTransport<'a, T> {
     /// This design avoids blocking and allows the caller to interleave
     /// other work between polls.
     pub fn poll(&mut self) {
+        // ── Step 0: Bus-off recovery ────────────────────────────────────
+        // If the FDCAN went bus-off (TEC >= 256), it enters INIT mode
+        // automatically on STM32G4. We detect this and re-open the bus.
+        if self.transceiver.transceiver_state() == TransceiverState::BusOff {
+            // Re-initialize: close → init → open
+            self.transceiver.close();
+            self.transceiver.init();
+            self.transceiver.open();
+            // Reset any in-progress RX/TX sessions
+            self.rx_phase = RxPhase::Idle;
+            self.tx_phase = TxPhase::Idle;
+            self.rx_handler = None;
+            self.tx_handler = None;
+            return; // skip this poll cycle, let bus stabilize
+        }
+
         // ── Step 1: Try to receive a CAN frame ──────────────────────────
         if let Some(frame) = self.transceiver.receive() {
             let frame_id = frame.id().raw_id();
