@@ -74,3 +74,17 @@
 **Root cause**: Pi's can0 was already UP and healthy (ERROR-ACTIVE at 500 kbps). The actual issue was the F413 using wrong GPIO pins (PA11/PA12 instead of PD0/PD1).
 
 **Lesson**: When debugging CAN bus issues with multiple nodes, use the Pi as a known-good reference: `cansend can0 600#023E00` to inject test frames, `candump can0` to sniff. If the Pi can send (gets ACK) but a board can't receive, the board's RX path is broken. If the Pi sees frames from one board but another board doesn't, the second board isn't on the bus.
+
+## 2026-03-16 — Multiple UDS servers on same CAN ID pair cause response shadowing
+
+**Context**: WriteDID (0x2E) returned NRC 0x11 (serviceNotSupported) on G474, despite the handler being registered in DiagRouter. TesterPresent (0x3E) worked. Investigation explored vtable corruption, LTO issues, router dispatch bugs — all dead ends.
+
+**Root cause**: The F413ZH was still running `can_server_f413` firmware on the same bus, listening on the same CAN IDs (0x600/0x601). When the Pi sent a WriteDID request, BOTH the G474 and F413 received it. The F413 responded first with NRC 0x11 (it doesn't support 0x2E). The Pi's `candump` captured the F413's response and ignored the G474's (which arrived later and was lost in the bus arbitration).
+
+**Why TesterPresent worked**: Both servers support 0x3E — the F413 responded with `7E 00` and the G474 also responded with `7E 00`. Since both responses are identical, it appeared to work.
+
+**How we found it**: (1) Bypassed the DiagRouter entirely (always return positive) — still got NRC. (2) Defined handler IN the BSP crate (same compilation unit) — still NRC. (3) Used handler as ONLY job — still NRC. (4) Checked F413 UART — found it actively processing and responding to requests.
+
+**Fix**: Erase or disable CAN on all boards except the one under test. On a multi-ECU bench, each ECU must use unique CAN ID pairs for UDS (e.g., CVC=0x641/0x642, FZC=0x643/0x644).
+
+**Principle**: When a UDS response is unexpected (wrong NRC, wrong data), check ALL nodes on the bus — another ECU may be responding to the same request ID. CAN has no source address in the frame — you can't tell which node sent a response by looking at the CAN ID alone. Use unique request/response ID pairs per ECU, or ensure only one server is active at a time during testing.
