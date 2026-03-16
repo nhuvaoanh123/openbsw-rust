@@ -439,8 +439,15 @@ fn main() -> ! {
     let _ = writeln!(uart, "Calling DiagCanTransport::init() ...");
     transport.init(); // LifecycleComponent::init() — opens CAN bus
 
+    // Debug: read back FDCAN registers after init
+    unsafe {
+        let nbtp = core::ptr::read_volatile(0x4000_641C as *const u32);
+        let cccr = core::ptr::read_volatile(0x4000_6418 as *const u32);
+        let psr = core::ptr::read_volatile(0x4000_6444 as *const u32);
+        let _ = writeln!(uart, "FDCAN: NBTP=0x{:08X} CCCR=0x{:08X} PSR=0x{:08X}", nbtp, cccr, psr);
+        let _ = writeln!(uart, "Expected NBTP=0x{:08X}", (3u32 << 25) | (16 << 16) | (13 << 8) | 3);
+    }
     let _ = writeln!(uart, "BSW stack ready.  Listen=0x{:03X}  Reply=0x{:03X}", REQUEST_ID, RESPONSE_ID);
-    let _ = writeln!(uart, "Jobs: TesterPresent(0x3E), DiagSessionCtrl(0x10), ReadDID(0x22), WriteDID(0x2E)");
     uart.flush();
 
     // Solid LED = stack is up and bus is open.

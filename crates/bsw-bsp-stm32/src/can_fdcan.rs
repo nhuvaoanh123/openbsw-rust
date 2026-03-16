@@ -175,7 +175,7 @@ const CCCR_DAR: u32 = 1 << 6;
 /// Bit time = 1 + 14 + 5 = 20 TQ @ 10 MHz = 500 kbit/s.
 const NBTP_500KBPS: u32 = {
     let nbrp: u32 = 16;     // prescaler − 1
-    let ntseg1: u32 = 13;   // Tseg1 − 1 = 14 − 1
+    let ntseg1: u32 = 14;   // Tseg1 − 1 = 15 − 1  (matches .ioc NominalTimeSeg1=15)
     let ntseg2: u32 = 3;    // Tseg2 − 1 = 4 − 1  (bits [14:8])
     let nsjw: u32 = 3;      // SJW − 1 = 4 − 1  (bits [31:25])
     (nsjw << 25) | (nbrp << 16) | (ntseg1 << 8) | ntseg2
@@ -609,6 +609,13 @@ impl CanTransceiver for FdCanTransceiver {
 
             // Bit timing for 500 kbit/s.
             reg_write(FDCAN1_BASE, FDCAN_NBTP_OFFSET, NBTP_500KBPS);
+
+            // Verify NBTP write took effect (debug: detect bus-off recovery corruption).
+            let readback = reg_read(FDCAN1_BASE, FDCAN_NBTP_OFFSET);
+            if readback != NBTP_500KBPS {
+                // NBTP didn't stick — try writing again
+                reg_write(FDCAN1_BASE, FDCAN_NBTP_OFFSET, NBTP_500KBPS);
+            }
 
             // Message RAM layout and accept-all filter.
             self.configure_message_ram();
