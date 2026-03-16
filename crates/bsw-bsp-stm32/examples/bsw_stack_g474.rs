@@ -474,10 +474,13 @@ fn main() -> ! {
         // ── Step 0: Drain FDCAN1 hardware RX FIFO into software buffer ──
         unsafe { transport.transceiver_mut().isr_rx_fifo0() };
 
-        // ── Step 0b: Heartbeat TX — send alive frame every 100 ms ───────
+        // ── Step 0b: Heartbeat TX — DISABLED to prevent bus errors ──────
+        // The heartbeat sends on 0x010 which nobody ACKs, causing TEC to
+        // increment and eventually Error Passive / Bus Off. Re-enable when
+        // a peer ECU is listening for heartbeat frames.
         let now_hb = timer.system_time_us_64();
         let delta = now_hb.wrapping_sub(last_hb_tx);
-        if delta >= HEARTBEAT_PERIOD_US {
+        if false && delta >= HEARTBEAT_PERIOD_US {
             last_hb_tx = now_hb;
             let hb_data = [heartbeat_counter, 0x01, 0x00, 0x00]; // counter + status=running
             let hb_frame = bsw_can::frame::CanFrame::with_data(
