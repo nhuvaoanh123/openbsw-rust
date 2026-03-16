@@ -170,7 +170,7 @@ const RESPONSE_ID: u32 = 0x601;
 // Number of test cases in the sequence.
 // ---------------------------------------------------------------------------
 
-const NUM_TESTS: usize = 4;
+const NUM_TESTS: usize = 5;
 
 // ---------------------------------------------------------------------------
 // Raw MMIO helpers
@@ -636,6 +636,133 @@ fn main() -> ! {
             }
         };
         results[3] = passed;
+        if passed { pass_count += 1; }
+    }
+
+    // ------------------------------------------------------------------
+    // Test 5: ReadDID VIN (0x22 0xF1 0x90) → multi-frame response (19 bytes)
+    //
+    // The server responds with FF (msg_len=19, first 6 bytes) then CFs.
+    // We must send FC(CTS) after receiving FF, then collect CFs.
+    // ------------------------------------------------------------------
+    {
+        let req = [0x22_u8, 0xF1, 0x90];
+        let _ = writeln!(uart, "[5] ReadDID VIN  req={:02X?}", &req[..]);
+
+        // Send request as SF
+        let mut tx_buf = [0u8; 8];
+        let tx_len = isotp_encode_sf(&req, &mut tx_buf);
+        unsafe { fdcan1_send(REQUEST_ID, &tx_buf[..tx_len]) };
+
+        // Wait for FF (First Frame) on RESPONSE_ID
+        let deadline = timer.system_time_us_64() + 2_000_000; // 2s timeout
+        let mut rx_buf = [0u8; 64];
+        let mut received: usize = 0;
+        let mut msg_len: usize = 0;
+        let mut got_ff = false;
+
+        // Phase 1: wait for FF
+        loop {
+            if let Some(f) = unsafe { fdcan1_rx_fifo0_read() } {
+                if f.id == RESPONSE_ID {
+                    let pci = f.data[0];
+                    let ft = pci >> 4;
+                    if ft == 1 {
+                        // First Frame: decode msg_len from PCI
+                        msg_len = (((pci & 0x0F) as usize) << 8) | (f.data[1] as usize);
+                        let first_chunk = (f.dlc.min(8) as usize - 2).min(6).min(msg_len);
+                        rx_buf[..first_chunk].copy_from_slice(&f.data[2..2 + first_chunk]);
+                        received = first_chunk;
+                        got_ff = true;
+                        let _ = writeln!(uart, "    FF: msg_len={} first_chunk={}", msg_len, first_chunk);
+
+                        // Send Flow Control: CTS, BS=0, STmin=0
+                        let mut fc = [0u8; 8];
+                        fc[0] = 0x30; // FC CTS
+                        fc[1] = 0x00; // block size = unlimited
+                        fc[2] = 0x00; // STmin = 0
+                        unsafe { fdcan1_send(REQUEST_ID, &fc) };
+                        break;
+                    } else if ft == 0 {
+                        // SF response (shouldn't happen for VIN but handle it)
+                        let plen = (pci & 0x0F) as usize;
+                        let _ = writeln!(uart, "    Got SF instead of FF, plen={}", plen);
+                        msg_len = plen;
+                        rx_buf[..plen.min(7)].copy_from_slice(&f.data[1..1+plen.min(7)]);
+                        received = plen.min(7);
+                        got_ff = true; // treat as complete
+                        break;
+                    }
+                }
+            }
+            if timer.system_time_us_64() >= deadline {
+                break;
+            }
+        }
+
+        // Phase 2: collect CFs
+        if got_ff && received < msg_len {
+            let mut expected_seq: u8 = 1;
+            let cf_deadline = timer.system_time_us_64() + 2_000_000;
+            while received < msg_len {
+                if let Some(f) = unsafe { fdcan1_rx_fifo0_read() } {
+                    if f.id == RESPONSE_ID {
+                        let pci = f.data[0];
+                        if (pci >> 4) == 2 {
+                            let seq = pci & 0x0F;
+                            if seq != (expected_seq & 0x0F) {
+                                let _ = writeln!(uart, "    CF seq mismatch: expected {} got {}", expected_seq & 0x0F, seq);
+                                break;
+                            }
+                            let remaining = msg_len - received;
+                            let chunk = remaining.min(7);
+                            let dlc = f.dlc.min(8) as usize;
+                            let avail = (dlc - 1).min(chunk);
+                            rx_buf[received..received + avail].copy_from_slice(&f.data[1..1 + avail]);
+                            received += avail;
+                            expected_seq = expected_seq.wrapping_add(1);
+                            let _ = writeln!(uart, "    CF[{}]: +{} bytes, total={}/{}", seq, avail, received, msg_len);
+                        }
+                    }
+                }
+                if timer.system_time_us_64() >= cf_deadline {
+                    let _ = writeln!(uart, "    CF timeout: got {}/{} bytes", received, msg_len);
+                    break;
+                }
+            }
+        }
+
+        // Verify: expect [62, F1, 90, 'T', 'A', 'K', 'T', 'F', 'L', 'O', 'W', '_', 'G', '4', '7', '4', '_', '0', '1']
+        let passed = if !got_ff {
+            let _ = writeln!(uart, "    FAIL: timeout (no FF/SF received)");
+            false
+        } else if received < msg_len {
+            let _ = writeln!(uart, "    FAIL: incomplete ({}/{})", received, msg_len);
+            false
+        } else {
+            let ok = received >= 3
+                  && rx_buf[0] == 0x62
+                  && rx_buf[1] == 0xF1
+                  && rx_buf[2] == 0x90
+                  && received == 19;
+            if ok {
+                // Print VIN string
+                let vin = &rx_buf[3..received.min(19)];
+                let _ = write!(uart, "    VIN=\"");
+                for &b in vin {
+                    if b >= 0x20 && b < 0x7F {
+                        let _ = write!(uart, "{}", b as char);
+                    } else {
+                        let _ = write!(uart, ".");
+                    }
+                }
+                let _ = writeln!(uart, "\"  PASS");
+            } else {
+                let _ = writeln!(uart, "    FAIL: unexpected response (len={}, data={:02X?})", received, &rx_buf[..received.min(20)]);
+            }
+            ok
+        };
+        results[4] = passed;
         if passed { pass_count += 1; }
     }
 
