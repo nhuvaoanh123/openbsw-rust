@@ -89,6 +89,8 @@ use bsw_bsp_stm32::uart_g4::PolledUart;
 use bsw_bsp_stm32::can_fdcan::FdCanTransceiver;
 use bsw_can::transceiver::CanTransceiver as _;
 use bsw_bsp_stm32::diag_can::DiagCanTransport;
+use bsw_bsp_stm32::flash_g4::FlashG4;
+use bsw_bsp_stm32::nvm::{NvmManager, NvmBlockId};
 
 use bsw_lifecycle::LifecycleComponent as _;
 use bsw_uds::diag_job::{DiagJob, DiagRouter};
@@ -226,15 +228,14 @@ unsafe fn fdcan1_gpio_rcc_init() {
 // Custom ReadDataByIdentifier handler
 // ---------------------------------------------------------------------------
 
-/// UDS ReadDataByIdentifier (0x22) handler for DIDs 0xF190 and 0xF195.
+/// UDS ReadDataByIdentifier (0x22) handler — reads VIN from NvM.
 ///
 /// DIDs:
-/// - **0xF190** VIN  — 16 ASCII bytes → total response 19 bytes (FF + CFs).
-/// - **0xF195** SW version — 9 ASCII bytes → total response 12 bytes (FF + CFs).
+/// - **0xF190** VIN  — reads from flash NvM (16 bytes), falls back to default
+/// - **0xF195** SW version — hardcoded "BSP-0.1.0"
 struct ReadDidHandler;
 
 impl DiagJob for ReadDidHandler {
-    /// Match any request that starts with SID 0x22.
     fn implemented_request(&self) -> &[u8] {
         &[0x22]
     }
@@ -244,28 +245,29 @@ impl DiagJob for ReadDidHandler {
     }
 
     fn process(&self, request: &[u8], response: &mut [u8]) -> Result<usize, Nrc> {
-        // Minimum: SID(1) + DID_HI(1) + DID_LO(1) = 3 bytes.
         if request.len() < 3 {
             return Err(Nrc::IncorrectMessageLengthOrInvalidFormat);
         }
 
-        let did = u16::from_be_bytes([
-            request.get(1).copied().unwrap_or(0),
-            request.get(2).copied().unwrap_or(0),
-        ]);
+        let did = u16::from_be_bytes([request[1], request[2]]);
 
         match did {
             0xF190 => {
-                // VIN — 16-char ASCII: response = [0x62, 0xF1, 0x90, <16 bytes>] = 19 bytes.
-                if response.len() < 19 {
-                    return Err(Nrc::ResponseTooLong);
-                }
+                // VIN — read from NvM, fallback to default if empty
                 response[0] = 0x62;
                 response[1] = 0xF1;
                 response[2] = 0x90;
-                let vin = b"TAKTFLOW_G474_01";
-                response[3..3 + 16].copy_from_slice(vin);
-                Ok(19)
+                let mut vin_buf = [0u8; 17];
+                let nvm_len = NvmManager::read_block(NvmBlockId::Vin, &mut vin_buf);
+                if nvm_len > 0 {
+                    let len = nvm_len.min(16);
+                    response[3..3 + len].copy_from_slice(&vin_buf[..len]);
+                    Ok(3 + len)
+                } else {
+                    let default_vin = b"TAKTFLOW_G474_01";
+                    response[3..3 + 16].copy_from_slice(default_vin);
+                    Ok(19)
+                }
             }
             0xF195 => {
                 // SW version — 9-char ASCII: response = [0x62, 0xF1, 0x95, <9 bytes>] = 12 bytes.
@@ -278,6 +280,54 @@ impl DiagJob for ReadDidHandler {
                 let ver = b"BSP-0.1.0";
                 response[3..3 + 9].copy_from_slice(ver);
                 Ok(12)
+            }
+            _ => Err(Nrc::RequestOutOfRange),
+        }
+    }
+}
+
+/// UDS WriteDataByIdentifier (0x2E) handler — writes VIN to flash NvM.
+///
+/// Only DID 0xF190 (VIN) is writable. Writes persist across power cycles.
+struct WriteDidHandler;
+
+impl DiagJob for WriteDidHandler {
+    fn implemented_request(&self) -> &[u8] {
+        &[0x2E]
+    }
+
+    fn session_mask(&self) -> SessionMask {
+        // Allow writes in all sessions for demo. Production: EXTENDED only.
+        SessionMask::ALL
+    }
+
+    fn process(&self, request: &[u8], response: &mut [u8]) -> Result<usize, Nrc> {
+        // WriteDID: [0x2E, DID_hi, DID_lo, data...]
+        if request.len() < 4 {
+            return Err(Nrc::IncorrectMessageLengthOrInvalidFormat);
+        }
+
+        let did = u16::from_be_bytes([request[1], request[2]]);
+        let data = &request[3..];
+
+        match did {
+            0xF190 => {
+                // Write VIN to NvM (max 17 bytes)
+                let write_len = data.len().min(17);
+                let ok = unsafe {
+                    FlashG4::unlock();
+                    let result = NvmManager::write_block(NvmBlockId::Vin, &data[..write_len]);
+                    FlashG4::lock();
+                    result
+                };
+                if ok {
+                    response[0] = 0x6E; // positive response = SID + 0x40
+                    response[1] = 0xF1;
+                    response[2] = 0x90;
+                    Ok(3)
+                } else {
+                    Err(Nrc::GeneralProgrammingFailure)
+                }
             }
             _ => Err(Nrc::RequestOutOfRange),
         }
@@ -357,12 +407,14 @@ fn main() -> ! {
     let tester_present = TesterPresent { session_mask: SessionMask::ALL };
     let session_ctrl   = DiagnosticSessionControl { current_session: DiagSession::Default };
     let read_did       = ReadDidHandler;
+    let write_did      = WriteDidHandler;
 
     // 6b. Build the jobs slice (array of trait-object references).
-    let jobs: [&dyn DiagJob; 3] = [
+    let jobs: [&dyn DiagJob; 4] = [
         &tester_present,
         &session_ctrl,
         &read_did,
+        &write_did,
     ];
 
     // 6c. DiagRouter borrows the jobs slice.
@@ -388,7 +440,7 @@ fn main() -> ! {
     transport.init(); // LifecycleComponent::init() — opens CAN bus
 
     let _ = writeln!(uart, "BSW stack ready.  Listen=0x{:03X}  Reply=0x{:03X}", REQUEST_ID, RESPONSE_ID);
-    let _ = writeln!(uart, "Jobs: TesterPresent(0x3E), DiagnosticSessionControl(0x10), ReadDID(0x22)");
+    let _ = writeln!(uart, "Jobs: TesterPresent(0x3E), DiagSessionCtrl(0x10), ReadDID(0x22), WriteDID(0x2E)");
     uart.flush();
 
     // Solid LED = stack is up and bus is open.
