@@ -50,3 +50,27 @@
 **Porting rule**: Every time you port FDCAN to a new STM32 family, verify: (1) register offsets against CMSIS `FDCAN_GlobalTypeDef` struct, (2) which config registers exist (SIDFC/XIDFC/RXF0C may not), (3) MRAM element stride, (4) bit field widths in status registers. Start from the target chip's CMSIS/PAC headers, never from a "generic" M_CAN spec.
 
 **Principle**: Never assume peripheral register maps are portable across MCU families, even within the same vendor. The C++ code had the same bug — it compiled fine because register offsets are just integer constants. Always validate with a diagnostic register dump on real hardware.
+
+## 2026-03-16 — STM32G4 FDCAN NBTP bit field layout swapped from M_CAN
+
+**Context**: Real-bus CAN test between G474RE (FDCAN) and F413ZH (bxCAN). Both at 500 kbps. F413 tester transmitted successfully (TXOK0=1), Pi saw frames, but G474 FDCAN went bus-off with Bit 0/1 Errors or stayed in "synchronizing" (ACT=1).
+
+**Mistake**: Used standard M_CAN NBTP bit field layout: `[31:25]=NSJW, [24:16]=NTSEG1, [14:8]=NTSEG2, [8:0]=NBRP`. STM32G4 FDCAN has **swapped** fields: `[31:25]=NSJW, [24:16]=NBRP, [15:8]=NTSEG1, [6:0]=NTSEG2`. NBRP and NTSEG1 are in each other's positions.
+
+**Symptom**: NBTP register value 0x060E0310 decoded as prescaler=15 (wrong), Tseg1=4 (wrong), Tseg2=17 (wrong) → ~515 kbps actual baud. The 3% mismatch from the bus's 500 kbps caused the FDCAN to detect bit errors on every frame, driving TEC to 255 (bus-off).
+
+**Diagnostic trail**: (1) F413 TXOK0=1 + Pi candump saw frames → bus works. (2) G474 PSR ACT=1 with ECR=0 → FDCAN never synchronized when idle bus. (3) After Pi sends frames → G474 PSR LEC=2 (Bit 0 Error), TEC=255, bus-off → sees traffic but can't decode. (4) GPIO/clock dump confirmed PA11/PA12 AF9 and PCLK1 correct. (5) Checked CMSIS header → NBRP_Pos=16, NTSEG1_Pos=8 — swapped!
+
+**Fix**: Changed NBTP encoding from `(nsjw<<25)|(ntseg1<<16)|(ntseg2<<8)|nbrp` to `(nsjw<<25)|(nbrp<<16)|(ntseg1<<8)|ntseg2`. Result: 0x06100E03 → correct 500 kbps → 4/4 UDS tests PASS both directions.
+
+**Also fixed**: F413 CAN GPIO was PA11/PA12 (from .ioc template) but production wiring is PD0/PD1 (from rzc_f4_hw_stm32f4.c). Always check the actual hardware platform C file, not just the .ioc.
+
+**Updated porting rule**: When porting FDCAN to a new STM32 family, also verify (5) NBTP/DBTP bit field positions — they may be swapped. The STM32G4 FDCAN deviates from M_CAN in at least: register offsets, MRAM config presence, element stride, status field widths, AND bit timing register layout.
+
+## 2026-03-16 — Pi CAN interface as bus node: must be up before testing
+
+**Context**: Two-board CAN test failed with bus-off on both nodes. Pi's can0 was on the same physical bus and provided one 120Ω termination.
+
+**Root cause**: Pi's can0 was already UP and healthy (ERROR-ACTIVE at 500 kbps). The actual issue was the F413 using wrong GPIO pins (PA11/PA12 instead of PD0/PD1).
+
+**Lesson**: When debugging CAN bus issues with multiple nodes, use the Pi as a known-good reference: `cansend can0 600#023E00` to inject test frames, `candump can0` to sniff. If the Pi can send (gets ACK) but a board can't receive, the board's RX path is broken. If the Pi sees frames from one board but another board doesn't, the second board isn't on the bus.
