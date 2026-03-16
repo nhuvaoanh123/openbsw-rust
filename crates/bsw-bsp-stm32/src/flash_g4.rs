@@ -253,10 +253,23 @@ impl FlashG4 {
             // 2. Clear errors.
             Self::clear_errors();
 
-            // 3 + 4. Set PER and page number.
+            // 3 + 4. Set PER, PNB, and BKER (dual-bank page select).
+            //
+            // STM32G474 with DBANK=1 (dual-bank mode, option byte):
+            //   Bank 1: pages 0-63   → PNB = page_num,     BKER = 0
+            //   Bank 2: pages 64-127 → PNB = page_num - 64, BKER = 1
+            //
+            // PNB is bits [10:3] but only [9:3] used (7 bits = 0-127).
+            // In dual-bank mode, PNB must be 0-63 per bank.
+            const CR_BKER: u32 = 1 << 11;
+            let (pnb, bker) = if page_num >= 64 {
+                ((page_num - 64) as u32, CR_BKER)
+            } else {
+                (page_num as u32, 0)
+            };
             modify_reg(FLASH_CR, |v| {
-                let v = v & !CR_PNB_MASK; // clear existing PNB
-                let v = v | ((page_num as u32) << CR_PNB_SHIFT);
+                let v = v & !(CR_PNB_MASK | CR_BKER);
+                let v = v | (pnb << CR_PNB_SHIFT) | bker;
                 v | CR_PER
             });
 

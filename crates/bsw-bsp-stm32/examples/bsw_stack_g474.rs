@@ -316,8 +316,10 @@ impl DiagJob for WriteDidHandler {
                 let write_len = data.len().min(17);
                 let ok = unsafe {
                     FlashG4::unlock();
+                    FlashG4::clear_errors();
                     let result = NvmManager::write_block(NvmBlockId::Vin, &data[..write_len]);
-                    FlashG4::lock();
+                    // Don't lock — keep flash unlocked for subsequent writes.
+                    // Production code should lock after all writes are done.
                     result
                 };
                 if ok {

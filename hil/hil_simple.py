@@ -163,10 +163,13 @@ def main():
         ("ShortRequest_NRC", "22", check_short_request),
     ]
 
-    # Multi-frame test — ReadDID VIN (19 bytes response)
+    # Multi-frame test — ReadDID VIN
     multiframe_tests = [
         ("ReadDID_VIN_multiframe", "22F190"),
     ]
+
+    # WriteDID test — write a new VIN and read back
+    write_did_tests = True
 
     print(f"\n=== Rust BSW HIL Test Suite (simple) ===\n")
 
@@ -201,6 +204,33 @@ def main():
                 print(f"  [FAIL] {name}: resp={resp}")
         except Exception as e:
             print(f"  [FAIL] {name}: {e}")
+
+    # WriteDID + ReadDID persistence test
+    if write_did_tests:
+        total += 1
+        time.sleep(1.0)
+        try:
+            # Write VIN = "HIL_PASS" (8 bytes, fits in SF: 2E F1 90 + 8 data = 11 > 7)
+            # Need multi-frame for 11 bytes: FF + 1 CF
+            # Simpler: write "HILP" (4 bytes, SF: 07 2E F1 90 48 49 4C 50)
+            write_vin = "2EF19048494C50"  # WriteDID F190 + "HILP"
+            resp = send_recv(write_vin, timeout=2.0)
+            if resp and resp.upper().startswith("036EF190"):
+                # Write succeeded — now read back
+                time.sleep(0.5)
+                read_resp = send_recv_multiframe("22F190", timeout=2.0)
+                if read_resp and "48494C50" in read_resp.upper():
+                    vin = bytes.fromhex("48494C50").decode('ascii')
+                    print(f"  [PASS] WriteDID_ReadBack: wrote VIN='{vin}', read back matches")
+                    passed += 1
+                else:
+                    print(f"  [FAIL] WriteDID_ReadBack: write OK but read={read_resp}")
+            elif resp:
+                print(f"  [FAIL] WriteDID_ReadBack: write NRC resp={resp}")
+            else:
+                print(f"  [FAIL] WriteDID_ReadBack: write timeout")
+        except Exception as e:
+            print(f"  [FAIL] WriteDID_ReadBack: {e}")
 
     print(f"\n=== RESULT: {passed}/{total} PASS ===")
     sys.exit(0 if passed == total else 1)
