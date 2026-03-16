@@ -12,8 +12,12 @@ module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 must_use_candidate = "allow"
-cast_possible_truncation = "allow"  # UDS protocol uses fixed byte widths (u8/u16/u32)
-doc_markdown = "allow"  # Technical terms (ISO-TP, FDCAN, etc.) don't need backticks
+cast_possible_truncation = "allow"  # UDS/COM protocol uses fixed byte widths
+cast_sign_loss = "allow"            # Signal packing needs sign-preserving casts
+cast_possible_wrap = "allow"        # u32↔i32 conversions in signal values
+doc_markdown = "allow"              # Technical terms (ISO-TP, FDCAN, etc.)
+inline_always = "allow"             # Small MMIO helpers benefit from forced inlining
+match_same_arms = "allow"           # Explicit arms improve readability for protocol code
 
 [profile.release]
 lto = true

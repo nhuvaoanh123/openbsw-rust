@@ -34,6 +34,11 @@ name = "bsw-bsp-stm32"
 version = "0.1.0"
 dependencies = [
  "bsw-can",
+ "bsw-docan",
+ "bsw-lifecycle",
+ "bsw-transport",
+ "bsw-uds",
+ "bsw-util",
  "cortex-m",
  "cortex-m-rt",
  "stm32f4xx-hal",
@@ -43,6 +48,14 @@ dependencies = [
 name = "bsw-can"
 version = "0.1.0"
 dependencies = [
+ "bsw-estd",
+]
+
+[[package]]
+name = "bsw-com"
+version = "0.1.0"
+dependencies = [
+ "bsw-can",
  "bsw-estd",
 ]
 

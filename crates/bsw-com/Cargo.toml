@@ -1,0 +1,17 @@
+[package]
+name = "bsw-com"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "AUTOSAR-style COM layer — signal packing/unpacking for CAN PDUs"
+
+[features]
+default = ["std"]
+std = []
+
+[dependencies]
+bsw-can = { path = "../bsw-can", default-features = false }
+bsw-estd = { path = "../bsw-estd", default-features = false }
+
+[lints]
+workspace = true
