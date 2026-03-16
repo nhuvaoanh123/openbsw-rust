@@ -128,10 +128,10 @@ const GPIO_BSRR_OFFSET:    usize = 0x18;
 /// LED pin: PA5 (LD2, green, active-high).
 const LED_PIN: u32 = 5;
 
-/// Physical request CAN ID: tester → ECU.
-const REQUEST_ID: u32 = 0x600;
-/// Physical response CAN ID: ECU → tester.
-const RESPONSE_ID: u32 = 0x601;
+/// Physical request CAN ID: tester → ECU (G474/FZC = 0x641, unique per ECU).
+const REQUEST_ID: u32 = 0x641;
+/// Physical response CAN ID: ECU → tester (G474/FZC = 0x642).
+const RESPONSE_ID: u32 = 0x642;
 
 /// Heartbeat print interval: 5 seconds in microseconds.
 const HEARTBEAT_US: u64 = 5_000_000;
@@ -503,7 +503,10 @@ fn main() -> ! {
         if now.wrapping_sub(last_heartbeat) >= HEARTBEAT_US {
             last_heartbeat = now;
             tick = tick.wrapping_add(1);
-            let _ = writeln!(uart, "heartbeat tick={}", tick);
+            // Print transceiver state for bus-off debugging
+            let ts = transport.transceiver().transceiver_state();
+            let st = transport.transceiver().state();
+            let _ = writeln!(uart, "tick={} bus={:?} state={:?}", tick, ts, st);
             uart.flush();
         }
     }
