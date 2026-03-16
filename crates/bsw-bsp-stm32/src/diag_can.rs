@@ -97,7 +97,10 @@ use bsw_uds::session::DiagSession;
 // ---------------------------------------------------------------------------
 
 /// Maximum ISO-TP message size (12-bit length field, standard addressing).
-const MAX_MSG_LEN: usize = 4095;
+/// Maximum message length for ISO-TP reassembly/TX.
+/// Kept at 256 to avoid stack overflow on Cortex-M4 (8 KB stack).
+/// For messages >256 bytes, increase this and ensure sufficient stack.
+const MAX_MSG_LEN: usize = 256;
 
 /// CAN frame data length for classic CAN (8 bytes).
 const CAN_DLC: usize = 8;
@@ -505,17 +508,18 @@ impl<'a, T: CanTransceiver + CanReceiver> DiagCanTransport<'a, T> {
 
     /// Dispatches the assembled request to the UDS router and starts
     /// transmitting the response.
+    ///
+    /// Uses a 256-byte local buffer (not 4095) to avoid stack overflow
+    /// on Cortex-M4. UDS responses are always < 256 bytes in practice.
     fn dispatch_and_respond(&mut self) {
         let request = &self.rx_buf[..self.rx_len];
-        let mut response_buf = [0u8; MAX_MSG_LEN];
+        let mut response_buf = [0u8; 256];
 
         match self.router.dispatch(request, self.session, &mut response_buf) {
             Ok(resp_len) => {
                 self.start_tx(&response_buf[..resp_len]);
             }
             Err(nrc) => {
-                // Build a negative response: [0x7F, SID, NRC].
-                // The SID is the first byte of the request.
                 let sid = if request.is_empty() { 0x00 } else { request[0] };
                 let nrc_response = [NRC_SID, sid, nrc.as_byte()];
                 self.start_tx(&nrc_response);

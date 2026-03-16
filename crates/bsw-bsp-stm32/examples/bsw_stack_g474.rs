@@ -406,6 +406,12 @@ fn main() -> ! {
     let mut tick: u32 = 0;
 
     loop {
+        // ── Step 0: Drain FDCAN1 hardware RX FIFO into software buffer ──
+        // Without this, FdCanTransceiver::receive() always returns None
+        // because the software ring-buffer is only filled by isr_rx_fifo0().
+        // In polling mode (no ISR), we must call this manually each loop.
+        unsafe { transport.transceiver_mut().isr_rx_fifo0() };
+
         // ── Step 1: Drive the transport (ISO-TP + UDS) ─────────────────
         transport.poll();
 
