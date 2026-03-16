@@ -38,6 +38,10 @@ pub mod can_fdcan;
 pub mod clock_g4;
 #[cfg(feature = "stm32g474")]
 pub mod uart_g4;
+#[cfg(feature = "stm32g474")]
+pub mod flash_g4;
+#[cfg(feature = "stm32g474")]
+pub mod nvm;
 
 // Re-exports for convenience
 pub use gpio::{InputPin, OutputPin, Port, Pull};
