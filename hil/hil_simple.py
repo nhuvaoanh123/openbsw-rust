@@ -135,10 +135,11 @@ def check_tester_present(resp):
     return resp.startswith("027E00"), f"resp={resp}"
 
 def check_diag_session_default(resp):
-    return resp.startswith("0650010019"), f"resp={resp}"
+    # Positive response: 0x50 0x01 + P2/P2* timing (may vary)
+    return resp.upper().startswith("06500100") or resp.upper().startswith("065001"), f"resp={resp}"
 
 def check_diag_session_extended(resp):
-    return resp.startswith("0650030019"), f"resp={resp}"
+    return resp.upper().startswith("06500300") or resp.upper().startswith("065003"), f"resp={resp}"
 
 def check_read_did_sw(resp):
     return "62F195" in resp.upper(), f"resp={resp}"
