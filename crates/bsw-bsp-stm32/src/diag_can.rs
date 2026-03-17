@@ -515,11 +515,19 @@ impl<'a, T: CanTransceiver + CanReceiver> DiagCanTransport<'a, T> {
         let request = &self.rx_buf[..self.rx_len];
         let mut response_buf = [0u8; 256];
 
+        // ISO 14229: suppress-positive-response bit (bit 7 of sub-function byte).
+        // If set, positive responses are suppressed; NRC responses are still sent.
+        let suppress_positive = request.len() >= 2 && (request[1] & 0x80) != 0;
+
         match self.router.dispatch(request, self.session, &mut response_buf) {
             Ok(resp_len) => {
-                self.start_tx(&response_buf[..resp_len]);
+                if !suppress_positive {
+                    self.start_tx(&response_buf[..resp_len]);
+                }
+                // If suppressed, silently consume the positive response.
             }
             Err(nrc) => {
+                // NRC responses are ALWAYS sent, even with suppress bit.
                 let sid = if request.is_empty() { 0x00 } else { request[0] };
                 let nrc_response = [NRC_SID, sid, nrc.as_byte()];
                 self.start_tx(&nrc_response);
