@@ -67,23 +67,26 @@ const KEY2: u32 = 0xCDEF89AB;
 pub const FLASH_BASE_ADDR: u32 = 0x0800_0000;
 /// Total flash size: 512 KB.
 pub const FLASH_SIZE: u32 = 512 * 1024;
-/// Number of pages.
-pub const FLASH_PAGE_COUNT: u8 = 128;
-/// Page size: 4 KB.
-pub const FLASH_PAGE_SIZE: u32 = 4 * 1024;
+/// Number of pages (dual-bank mode: 256 × 2 KB; single-bank: 128 × 4 KB).
+/// STM32G474RE with DBANK=1 uses 256 pages.
+pub const FLASH_PAGE_COUNT: u16 = 256;
+/// Page size in dual-bank mode: 2 KB.
+/// (Single-bank mode uses 4 KB — check DBANK option byte.)
+pub const FLASH_PAGE_SIZE: u32 = 2 * 1024;
 /// Program granularity: 8 bytes (doubleword).
 pub const FLASH_PROG_GRANULARITY: u32 = 8;
 
 // ---------------------------------------------------------------------------
-// NvM storage area (pages 124–127, top 16 KB)
+// NvM storage area (last 8 KB = pages 252–255 in dual-bank mode)
 // ---------------------------------------------------------------------------
 
-/// Base address of the NvM storage area (page 124).
-pub const NVM_BASE_ADDR: u32 = 0x0807_C000;
-/// Total size of the NvM storage area.
-pub const NVM_SIZE: u32 = 16 * 1024;
-/// First NvM page number.
-pub const NVM_PAGE_START: u8 = 124;
+/// Base address of the NvM storage area.
+/// Dual-bank: page 252 = 0x0807_E000 (bank 2 page 124).
+pub const NVM_BASE_ADDR: u32 = 0x0807_E000;
+/// Total size of the NvM storage area (4 pages × 2 KB = 8 KB).
+pub const NVM_SIZE: u32 = 8 * 1024;
+/// First NvM page number (global, 0-255).
+pub const NVM_PAGE_START: u16 = 252;
 /// Number of NvM pages.
 pub const NVM_PAGE_COUNT: u8 = 4;
 
@@ -238,7 +241,7 @@ impl FlashG4 {
     ///
     /// Flash must be unlocked before calling.  Caller must guarantee the CPU
     /// is not fetching code from `page_num`.
-    pub unsafe fn erase_page(page_num: u8) -> bool {
+    pub unsafe fn erase_page(page_num: u16) -> bool {
         if page_num >= FLASH_PAGE_COUNT {
             return false;
         }
@@ -255,15 +258,14 @@ impl FlashG4 {
 
             // 3 + 4. Set PER, PNB, and BKER (dual-bank page select).
             //
-            // STM32G474 with DBANK=1 (dual-bank mode, option byte):
-            //   Bank 1: pages 0-63   → PNB = page_num,     BKER = 0
-            //   Bank 2: pages 64-127 → PNB = page_num - 64, BKER = 1
+            // STM32G474 with DBANK=1: 256 × 2 KB pages.
+            //   Bank 1: pages 0-127   → PNB = page_num,       BKER = 0
+            //   Bank 2: pages 128-255 → PNB = page_num - 128, BKER = 1
             //
-            // PNB is bits [10:3] but only [9:3] used (7 bits = 0-127).
-            // In dual-bank mode, PNB must be 0-63 per bank.
+            // PNB [10:3] = 8-bit page number within bank (0-127).
             const CR_BKER: u32 = 1 << 11;
-            let (pnb, bker) = if page_num >= 64 {
-                ((page_num - 64) as u32, CR_BKER)
+            let (pnb, bker) = if page_num >= 128 {
+                ((page_num - 128) as u32, CR_BKER)
             } else {
                 (page_num as u32, 0)
             };

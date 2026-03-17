@@ -54,20 +54,20 @@ use crate::flash_g4::{FlashG4, NVM_BASE_ADDR, NVM_PAGE_START};
 // Layout constants
 // ---------------------------------------------------------------------------
 
-/// Page size (4 KB) — same as [`crate::flash_g4::FLASH_PAGE_SIZE`].
-const PAGE_SIZE: usize = 4 * 1024;
+/// Page size (2 KB in dual-bank mode).
+const PAGE_SIZE: usize = crate::flash_g4::FLASH_PAGE_SIZE as usize;
 
-/// Absolute address of the block directory (page 124).
-const DIR_ADDR: u32 = NVM_BASE_ADDR; // 0x0807_C000
+/// Absolute address of the block directory (page 252 in dual-bank).
+const DIR_ADDR: u32 = NVM_BASE_ADDR;
 
-/// Absolute address of the data page (page 125).
-const DATA_ADDR: u32 = NVM_BASE_ADDR + PAGE_SIZE as u32; // 0x0807_D000
+/// Absolute address of the data page (page 253 in dual-bank).
+const DATA_ADDR: u32 = NVM_BASE_ADDR + PAGE_SIZE as u32;
 
-/// Flash page number of the block directory.
-const DIR_PAGE: u8 = NVM_PAGE_START; // 124
+/// Flash page number of the block directory (252 in dual-bank).
+const DIR_PAGE: u16 = NVM_PAGE_START;
 
-/// Flash page number of the data page.
-const DATA_PAGE: u8 = NVM_PAGE_START + 1; // 125
+/// Flash page number of the data page (253 in dual-bank).
+const DATA_PAGE: u16 = NVM_PAGE_START + 1;
 
 // ---------------------------------------------------------------------------
 // Block directory constants
