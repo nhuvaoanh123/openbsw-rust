@@ -33,23 +33,10 @@ KNOWN_SIDS = {0x10, 0x11, 0x14, 0x19, 0x22, 0x27, 0x2E, 0x31, 0x3E, 0x85}
 
 
 def send_uds_sf(request: bytes, timeout: float = 2.0) -> Optional[bytes]:
-    """Send UDS request, receive response. Handles both SF and FF transparently.
-    For FF responses, extracts the UDS payload from the first frame (partial).
-    For full multi-frame reassembly, use send_uds_multiframe() instead."""
-    sf_hex = encode_sf(request)
-    resp_hex = send_recv_raw(REQUEST_ID, sf_hex, RESPONSE_ID, timeout)
-    if resp_hex is None:
-        return None
-    try:
-        return decode_sf(resp_hex)
-    except ValueError:
-        raw = bytes.fromhex(resp_hex)
-        if len(raw) >= 2 and (raw[0] >> 4) == 1:
-            # First Frame — extract partial UDS payload (skip 2-byte PCI)
-            # This gives the first 6 bytes of UDS data, enough for SID + DID checks
-            msg_len = ((raw[0] & 0x0F) << 8) | raw[1]
-            return raw[2:min(len(raw), 2 + msg_len)]
-        return raw
+    """Send UDS request, receive response. Handles both SF and multi-frame.
+    Always uses the multi-frame transport (sends FC automatically for FF responses).
+    Returns the full reassembled UDS payload."""
+    return send_uds_multiframe(request, timeout=timeout)
 
 
 def send_uds_multiframe(request: bytes, timeout: float = 3.0) -> Optional[bytes]:

@@ -516,8 +516,14 @@ impl<'a, T: CanTransceiver + CanReceiver> DiagCanTransport<'a, T> {
         let mut response_buf = [0u8; 256];
 
         // ISO 14229: suppress-positive-response bit (bit 7 of sub-function byte).
-        // If set, positive responses are suppressed; NRC responses are still sent.
-        let suppress_positive = request.len() >= 2 && (request[1] & 0x80) != 0;
+        // Only applies to services WITH a sub-function parameter:
+        // 0x10 (DiagSessionCtrl), 0x11 (EcuReset), 0x19 (ReadDTCInfo),
+        // 0x27 (SecurityAccess), 0x28 (CommCtrl), 0x31 (RoutineCtrl),
+        // 0x3E (TesterPresent), 0x85 (ControlDtcSetting).
+        // NOT for 0x22 (ReadDID), 0x2E (WriteDID), 0x14 (ClearDTC).
+        const SERVICES_WITH_SUBFN: &[u8] = &[0x10, 0x11, 0x19, 0x27, 0x28, 0x31, 0x3E, 0x85];
+        let has_subfn = !request.is_empty() && SERVICES_WITH_SUBFN.contains(&request[0]);
+        let suppress_positive = has_subfn && request.len() >= 2 && (request[1] & 0x80) != 0;
 
         match self.router.dispatch(request, self.session, &mut response_buf) {
             Ok(resp_len) => {
