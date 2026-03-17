@@ -209,10 +209,12 @@ def _compute_key_from_seed(seed: bytes) -> bytes:
     """
     Compute the expected key from a seed using the ECU's key derivation algorithm.
 
-    Placeholder implementation: XOR each byte with 0xFF.
-    Replace with the actual algorithm from the openbsw-rust SecurityAccess module.
+    Algorithm: key = (seed_u32 ^ 0xDEAD_BEEF) as u16 (lower 16 bits).
+    Seed is 4 bytes big-endian from the ECU, key is 2 bytes big-endian back.
     """
-    return bytes(b ^ 0xFF for b in seed)
+    seed_u32 = int.from_bytes(seed[:4], 'big') if len(seed) >= 4 else int.from_bytes(seed, 'big')
+    key_u16 = (seed_u32 ^ 0xDEAD_BEEF) & 0xFFFF
+    return key_u16.to_bytes(2, 'big')
 
 
 @pytest.mark.parametrize("session_id,session_name", [

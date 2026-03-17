@@ -33,7 +33,8 @@ KNOWN_SIDS = {0x10, 0x11, 0x14, 0x19, 0x22, 0x27, 0x2E, 0x31, 0x3E, 0x85}
 
 
 def send_uds_sf(request: bytes, timeout: float = 2.0) -> Optional[bytes]:
-    """Send UDS request as SF, receive SF response. Returns UDS payload or None."""
+    """Send UDS request as SF, receive response (auto-handles SF and multi-frame).
+    Returns UDS payload or None."""
     sf_hex = encode_sf(request)
     resp_hex = send_recv_raw(REQUEST_ID, sf_hex, RESPONSE_ID, timeout)
     if resp_hex is None:
@@ -41,8 +42,12 @@ def send_uds_sf(request: bytes, timeout: float = 2.0) -> Optional[bytes]:
     try:
         return decode_sf(resp_hex)
     except ValueError:
-        # Non-SF response (FF, etc.) — return raw bytes
-        return bytes.fromhex(resp_hex)
+        # Non-SF response — check if it's a First Frame and try multi-frame
+        raw = bytes.fromhex(resp_hex)
+        if len(raw) >= 2 and (raw[0] >> 4) == 1:
+            # FF detected — retry with multi-frame handler
+            return send_uds_multiframe(request, timeout=timeout + 1)
+        return raw
 
 
 def send_uds_multiframe(request: bytes, timeout: float = 3.0) -> Optional[bytes]:
