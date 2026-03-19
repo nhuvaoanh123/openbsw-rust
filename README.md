@@ -1,6 +1,68 @@
 # openbsw-rust
 
-Incremental Rust rewrite of [Eclipse OpenBSW](https://github.com/eclipse-openbsw/openbsw) — an open-source AUTOSAR-inspired BSW stack.
+Incremental Rust rewrite of [Eclipse OpenBSW](https://github.com/eclipse-openbsw/openbsw) — an open-source AUTOSAR-inspired BSW stack for automotive microcontrollers.
+
+## Current Status
+
+| Metric | Value |
+|--------|-------|
+| Host unit tests | **942 passing** |
+| HIL pytest suite | **116 test functions** (~98% pass rate) |
+| Cross-compile targets | STM32F413ZH + STM32G474RE |
+| CI | 4 jobs, all green (host tests, cross-check F4/G4, clippy) |
+| Crates | 13 |
+
+### Hardware Verified
+
+| Module | NUCLEO-G474RE (FDCAN) | NUCLEO-F413ZH (bxCAN) |
+|--------|----------------------|----------------------|
+| Clock PLL | 170 MHz boost | 96 MHz HSE bypass |
+| DWT timer | PASS | PASS |
+| UART | USART2 PA2/PA3 | USART3 PD8/PD9 |
+| GPIO LED | PA5 toggle | PA5 toggle |
+| CAN loopback | FDCAN PASS | bxCAN PASS |
+| CAN real-bus | 4/4 PASS | 4/4 PASS |
+| UDS server | 3/3 PASS (13 KB) | 3/3 PASS (13 KB) |
+| ISO-TP | SF + multi-frame | SF + multi-frame |
+| Scheduler | 1ms/10ms/100ms | 1ms/10ms/100ms |
+| Watchdog IWDG | 1s timeout | — |
+
+### Full BSW Stack
+
+| Layer | Crate | Description | Tests |
+|-------|-------|-------------|-------|
+| BSP | `bsw-bsp-stm32` | Clock, GPIO, UART, CAN, Timer, IWDG | HW verified |
+| CAN | `bsw-can` | Abstract CAN transceiver + bus-off recovery | 45 |
+| Transport | `bsw-docan` | ISO 15765 (ISO-TP) codec — SF/FF/CF/FC | 52 |
+| Diagnostics | `bsw-uds` | ISO 14229 — 9 UDS services | 36 |
+| DEM | `bsw-com` | Diagnostic Event Manager — DTC lifecycle | 20 |
+| E2E | `bsw-com` | CRC-8 + alive counter protection | 17 |
+| NvM | `bsw-io` | Flash emulation / persistent storage | 6 |
+| Runtime | `bsw-runtime` | Scheduler, lifecycle, task management | 8 |
+
+### UDS Services Implemented
+
+- `0x10` DiagnosticSessionControl (default + extended)
+- `0x11` ECUReset
+- `0x22` ReadDataByIdentifier (VIN F190, SW version F195)
+- `0x27` SecurityAccess
+- `0x2E` WriteDataByIdentifier
+- `0x31` RoutineControl
+- `0x3E` TesterPresent
+- `0x14` ClearDiagnosticInformation
+- `0x19` ReadDTCInformation
+
+### HIL Test Coverage
+
+116 pytest functions across 8 test modules running on Raspberry Pi against real hardware:
+- `test_uds_services.py` — all 9 UDS services
+- `test_isotp_framing.py` — SF, FF/CF/FC multi-frame
+- `test_dem_dtc.py` — DTC lifecycle and persistence
+- `test_e2e.py` — CRC-8 and alive counter
+- `test_nvm_persistence.py` — flash read/write across resets
+- `test_session_security.py` — session transitions and security access
+- `test_negative_paths.py` — NRC handling and edge cases
+- `test_stress.py` — rapid-fire and bus-off recovery
 
 ## Methodology: Wrap, Replace, Prove
 
@@ -23,60 +85,56 @@ This is **not** a one-shot translation. We follow the incremental strangler-fig 
 - **Leaf modules first** — pure logic, no HW, no OS, no protocol state machines
 - **Every `unsafe` block must have a `// SAFETY:` comment** explaining the invariant
 
-### Module Priority
+### Workspace Structure
 
-| Phase | Module | LOC | Complexity | Status |
-|-------|--------|-----|------------|--------|
-| 1 | `timer` | 259 | Pure logic, sorted list | Done (in new-era-toolkits) |
-| 1 | `async` | 140 | Call/delegate wrappers | Done (in new-era-toolkits) |
-| 2 | `util` | 14,410 | Mixed — format, stream, string, command | Planned |
-| 2 | `estd` | 9,395 | Template containers (array, optional, variant) | Planned |
-| 3 | `storage` | 1,923 | NvM-like persistence | Planned |
-| 3 | `lifecycle` | 2,020 | Component init/shutdown state machine | Planned |
-| 3 | `logger` | 3,507 | Logging framework | Planned |
-| 4 | `transport` | 2,222 | Transport message framing | Planned |
-| 4 | `cpp2can` | 3,603 | CAN bus abstraction | Planned |
-| 4 | `cpp2ethernet` | 3,942 | Ethernet abstraction | Planned |
-| 5 | `docan` | 16,320 | CAN transport protocol (ISO 15765) | Planned |
-| 5 | `uds` | 18,510 | Diagnostic protocol (ISO 14229) | Planned |
-| 5 | `doip` | 19,744 | Diagnostics over IP (ISO 13400) | Planned |
+```
+openbsw-rust/
+├── Cargo.toml              # workspace root (13 crates)
+├── crates/
+│   ├── bsw-bsp-stm32/     # STM32 BSP (clock, GPIO, UART, CAN, timer, IWDG)
+│   ├── bsw-can/            # CAN abstraction + transceiver traits
+│   ├── bsw-com/            # DEM (DTC lifecycle) + E2E protection
+│   ├── bsw-docan/          # ISO 15765 CAN transport (ISO-TP)
+│   ├── bsw-doip/           # Diagnostics over IP (ISO 13400)
+│   ├── bsw-estd/           # Embedded std containers
+│   ├── bsw-ethernet/       # Ethernet abstraction
+│   ├── bsw-io/             # NvM / flash storage
+│   ├── bsw-lifecycle/      # Component init/shutdown state machine
+│   ├── bsw-runtime/        # Scheduler + task management
+│   ├── bsw-transport/      # Transport message framing
+│   ├── bsw-uds/            # UDS diagnostics (ISO 14229)
+│   └── bsw-util/           # Utility functions
+├── tests/
+│   └── hil/                # HIL pytest suite (116 tests)
+└── docs/
+    ├── plans/              # Implementation plans
+    ├── lessons-learned/    # BSP bringup lessons
+    └── test-evidence/      # Verification reports
+```
 
 ### Tooling
 
 | Tool | Role |
 |------|------|
-| `cxx` / `autocxx` | Safe Rust-C++ interop boundary |
-| `cargo test` | Rust-side tests |
-| `googletest` | C++ oracle tests (run both, compare) |
-| `clippy` | Lint |
-| `miri` | UB detection in unsafe blocks |
-| Sonnet | Module-level rewrites (pure logic) |
-| Opus | Architecture decisions, FFI boundary design |
+| `cargo test` | 942 host unit tests |
+| `pytest` | 116 HIL tests on Raspberry Pi |
+| `clippy` | Lint (pedantic, zero warnings) |
+| `cargo check --target thumbv7em-none-eabihf` | Cross-compile verification |
+| GitHub Actions | CI: host tests + cross-check F4/G4 + clippy |
 
-### Workspace Structure
+## Target Hardware
 
-```
-openbsw-rust/
-├── Cargo.toml              # workspace root
-├── crates/
-│   ├── bsw-timer/          # timer module (Phase 1)
-│   ├── bsw-async/          # async utilities (Phase 1)
-│   ├── bsw-util/           # util module (Phase 2)
-│   ├── bsw-estd/           # estd containers (Phase 2)
-│   ├── bsw-transport/      # transport framing (Phase 4)
-│   ├── bsw-docan/          # CAN transport (Phase 5)
-│   ├── bsw-uds/            # UDS diagnostics (Phase 5)
-│   └── bsw-doip/           # DoIP (Phase 5)
-├── bridge/                 # cxx/autocxx FFI boundaries
-│   └── docan-bridge/       # example: docan C++ ↔ Rust bridge
-└── tests/
-    └── oracle/             # comparison tests: C++ vs Rust output
-```
+| Board | MCU | CAN | Clock | Flash/RAM |
+|-------|-----|-----|-------|-----------|
+| NUCLEO-G474RE | STM32G474RE (Cortex-M4F) | FDCAN | 170 MHz | 512K / 128K |
+| NUCLEO-F413ZH | STM32F413ZH (Cortex-M4) | bxCAN | 96 MHz | 1.5M / 320K |
+
+All BSP drivers are register-level — no vendor HAL dependency.
 
 ## Origin
 
 Based on [Eclipse OpenBSW](https://github.com/eclipse-openbsw/openbsw) (Apache-2.0).
-Phase 1 modules (timer, async) prototyped in [new-era-toolkits](https://github.com/nhuvaoanh123/new-era-toolkits).
+C++ STM32 platform port: [eclipse-openbsw/openbsw#394](https://github.com/eclipse-openbsw/openbsw/issues/394).
 
 ## License
 
